@@ -1,3 +1,5 @@
+import os
+
 import torch
 import numpy as np
 torch.manual_seed(100)
@@ -55,10 +57,10 @@ class NeuralNetwork(nn.Module):
         logits = self.linear_relu_stack(x)
         return logits
 
-def train_loop(dataloader, model, loss_fn, optimizer, device):
+def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
+        X, y = X.cuda(), y.cuda()
         # Получаем предсказания модели для данного батча
         pred = model(X)
         # Вычисляем лосс
@@ -76,14 +78,14 @@ def train_loop(dataloader, model, loss_fn, optimizer, device):
             loss, current = loss.detach().cpu().item(), batch * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
-def test_loop(dataloader, model, loss_fn, device):
+def test_loop(dataloader, model, loss_fn):
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     test_loss, correct = 0, 0
 
     with torch.no_grad():
         for X, y in dataloader:
-            X, y = X.to(device), y.to(device)
+            X, y = X.cuda(), y.cuda()
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
             
@@ -113,11 +115,11 @@ def run_train(rank, world_size):
 
     sampler = DistributedSampler(training_data, num_replicas=world_size, rank=rank, shuffle=True)
 
-    train_dataloader = DataLoader(training_data, batch_size=64, shuffle=True, sampler=sampler)
+    train_dataloader = DataLoader(training_data, batch_size=64, sampler=sampler)
     test_dataloader = DataLoader(test_data, batch_size=64, shuffle=True)
 
     print(f'Using {rank} device')
-    model = NeuralNetwork().to(rank)
+    model = NeuralNetwork().cuda()
     print(model)
 
     loss_fn = nn.CrossEntropyLoss()
@@ -129,12 +131,13 @@ def run_train(rank, world_size):
 
     epochs = 3
     for t in range(epochs):
-        print(f"Epoch {t+1}\n-------------------------------")
+        if rank == 0:
+            print(f"Epoch {t+1}\n-------------------------------")
         model.train(True)
-        train_loop(train_dataloader, model, loss_fn, optimizer, device)
+        train_loop(train_dataloader, model, loss_fn, optimizer)
         if rank == 0:
             model.train(False)
-            test_loop(test_dataloader, model, loss_fn, device)
+            test_loop(test_dataloader, model, loss_fn)
         torch.distributed.barrier()
     print("Done!")
 
