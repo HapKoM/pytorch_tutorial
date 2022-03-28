@@ -57,10 +57,10 @@ class NeuralNetwork(nn.Module):
         logits = self.linear_relu_stack(x)
         return logits
 
-def train_loop(dataloader, model, loss_fn, optimizer):
+def train_loop(dataloader, model, loss_fn, optimizer, device):
     size = len(dataloader.dataset)
     for batch, (X, y) in enumerate(dataloader):
-        X, y = X.cuda(), y.cuda()
+        X, y = X.to(device), y.to(device)
         # Получаем предсказания модели для данного батча
         pred = model(X)
         # Вычисляем лосс
@@ -78,14 +78,14 @@ def train_loop(dataloader, model, loss_fn, optimizer):
             loss, current = loss.detach().cpu().item(), batch * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
-def test_loop(dataloader, model, loss_fn):
+def test_loop(dataloader, model, loss_fn, device):
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     test_loss, correct = 0, 0
 
     with torch.no_grad():
         for X, y in dataloader:
-            X, y = X.cuda(), y.cuda()
+            X, y = X.to(device), y.to(device)
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
             
@@ -119,8 +119,9 @@ def run_train(rank, world_size):
     test_dataloader = DataLoader(test_data, batch_size=64, shuffle=True)
 
     print(f'Using {rank} device')
-    model = NeuralNetwork().cuda()
-    print(model)
+    model = NeuralNetwork().to(rank)
+    if rank == 0:
+        print(model)
 
     loss_fn = nn.CrossEntropyLoss()
     learning_rate = 1e-3
@@ -133,11 +134,11 @@ def run_train(rank, world_size):
     for t in range(epochs):
         if rank == 0:
             print(f"Epoch {t+1}\n-------------------------------")
-        model.train(True)
-        train_loop(train_dataloader, model, loss_fn, optimizer)
+        ddp_model.train(True)
+        train_loop(train_dataloader, ddp_model, loss_fn, optimizer, rank)
         if rank == 0:
-            model.train(False)
-            test_loop(test_dataloader, model, loss_fn)
+            ddp_model.train(False)
+            test_loop(test_dataloader, ddp_model, loss_fn, rank)
         torch.distributed.barrier()
     print("Done!")
 
